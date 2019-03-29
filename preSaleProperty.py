@@ -215,7 +215,7 @@ def purchase(account, gpId, gpAmount):
         amount = ta[1] * gpAmount
         argsForMultiMintToken.append([account, tokenId, amount])
     assert (DynamicAppCall(getPropertyReversedHash(), "multiMintToken", argsForMultiMintToken))
-    Put(GetContext(), _concatkey(GP_LEFT_PREFIX, gpId), gpLeft - 1)
+    Put(GetContext(), _concatkey(GP_LEFT_PREFIX, gpId), gpLeft - gpAmount)
     Notify(["purchase", account, gpId, price, gpAmount])
     return True
 #################### Purchase method for player Ends  ######################
