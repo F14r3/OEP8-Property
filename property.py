@@ -446,7 +446,7 @@ def removeAuthorizedLevel(account):
     index = _findInList(account, authorizedAddressList)
     # make sure index did exist in authorizedAddressList
     assert (index < len(authorizedAddressList))
-    authorizedAddressList.remove(account)
+    authorizedAddressList.remove(index)
     Put(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY, Serialize(authorizedAddressList))
     Notify(["removeAuthorizedLevel", account])
     return True
