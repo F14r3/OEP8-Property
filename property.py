@@ -7,7 +7,7 @@ from ontology.interop.System.Runtime import CheckWitness, Notify, Deserialize, S
 from ontology.interop.System.Action import RegisterAction
 
 from ontology.interop.Ontology.Runtime import Base58ToAddress
-from ontology.builtins import concat, len, append, remove
+from ontology.builtins import concat, len, append
 
 
 ############### RequireWitness (safetycheck) Defination Starts #################
@@ -60,7 +60,7 @@ ApprovalEvent = RegisterAction("approval", "owner", "spender", "tokenId", "amoun
 CEO_ADDRESS_KEY = "CEO"
 CTO_ADDRESS_KEY = "CTO"
 COO_ADDRESS_KEY = "COO"
-AUTHORIZED_ADDRESS_LIST_KEY = "AuthorizedAddress"
+AUTHORIZED_LEVEL_PREFIX = "AuthorizedLevel"
 CEOAddress = Base58ToAddress('ceoxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
 
 CONTRACT_PAUSED_KEY = "Pause"
@@ -96,9 +96,9 @@ def Main(operation, args):
     if operation == "balanceOf":
         if len(args) != 2:
             return False
-        account = args[0]
+        acct = args[0]
         tokenId = args[1]
-        return balanceOf(account, tokenId)
+        return balanceOf(acct, tokenId)
     if operation == "transfer":
         if len(args) != 4:
             return False
@@ -173,12 +173,13 @@ def Main(operation, args):
     ############# Special methods for C Level accounts only defination Ends  ################
     ############# Special methods for C Level and authorized level defination Starts  ################
     if operation == "mintToken":
-        if len(args) != 3:
+        if len(args) != 4:
             return False
-        toAcct = args[0]
-        tokenId = args[1]
-        amount = args[2]
-        return mintToken(toAcct, tokenId, amount)
+        mintAcct = args[0]
+        toAcct = args[1]
+        tokenId = args[2]
+        amount = args[3]
+        return mintToken(mintAcct, toAcct, tokenId, amount)
     if operation == "multiMintToken":
         return multiMintToken(args)
     if operation == "burnToken":
@@ -196,8 +197,10 @@ def Main(operation, args):
         return getCTO()
     if operation == "getCOO":
         return getCOO()
-    if operation == "getAuthorizedLevel":
-        return getAuthorizedLevel()
+    if operation == "isAuthorizedLevel":
+        Require(len(args) == 1)
+        account = args[0]
+        return isAuthorizedLevel(account)
     #################### Optional methods defination Ends ######################
     return False
 
@@ -421,33 +424,21 @@ def setCLevel(option, account):
 def setAuthorizedLevel(account):
     RequireWitness(CEOAddress)
     Require(len(account) == 20)
-    authorizedAddressList = []
-    authorizedAddressListInfo = Get(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY)
-    if not authorizedAddressListInfo:
-        authorizedAddressList.append(account)
-    else:
-        authorizedAddressList = Deserialize(authorizedAddressListInfo)
-        if _checkInList(account, authorizedAddressList):
-            Notify(["alreadyInAuthorizedLevel", account])
-            return True
-        else:
-            authorizedAddressList.append(account)
-    Put(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY, Serialize(authorizedAddressList))
+    isAuthorized = Get(GetContext(), _concatkey(AUTHORIZED_LEVEL_PREFIX, account))
+    if isAuthorized == "T":
+        Notify(["alreadyInAuthorizedLevel", account])
+        return True
+    if not isAuthorized:
+        Put(GetContext(), _concatkey(AUTHORIZED_LEVEL_PREFIX, account), "T")
     Notify(["setAuthorizedLevel", account])
     return True
 
 def removeAuthorizedLevel(account):
     RequireWitness(CEOAddress)
     Require(len(account) == 20)
-    authorizedAddressListInfo = Get(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY)
-    assert (authorizedAddressListInfo)
-    authorizedAddressList = Deserialize(authorizedAddressListInfo)
-    assert (_checkInList(account, authorizedAddressList))
-    index = _findInList(account, authorizedAddressList)
-    # make sure index did exist in authorizedAddressList
-    assert (index < len(authorizedAddressList))
-    authorizedAddressList.remove(index)
-    Put(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY, Serialize(authorizedAddressList))
+    # make sure account is authorized before.
+    Require(isAuthorizedLevel(account))
+    Delete(GetContext(),_concatkey(AUTHORIZED_LEVEL_PREFIX, account))
     Notify(["removeAuthorizedLevel", account])
     return True
 
@@ -495,9 +486,10 @@ def unpause():
 
 
 ############# Special methods for C Level and authorized level defination Starts  ################
-def mintToken(toAcct, tokenId, amount):
+def mintToken(mintAcct, toAcct, tokenId, amount):
+    RequireWitness(mintAcct)
     Require(_whenNotPaused())
-    assert (_onlyCLevel() or _onlyAuthorizedLevel())
+    Require(_onlyCLevel() or isAuthorizedLevel(mintAcct))
     # make sure the to address is legal
     Require(len(toAcct) == 20)
     # make sure the tokenId has been created already
@@ -517,13 +509,13 @@ def mintToken(toAcct, tokenId, amount):
 
 def multiMintToken(args):
     for p in args:
-        Require(len(p) == 3)
-        Require(mintToken(p[0], p[1], p[2]))
+        Require(len(p) == 4)
+        Require(mintToken(p[0], p[1], p[2], p[3]))
     return True
 
 def burnToken(account, tokenId, amount):
     Require(_whenNotPaused())
-    Require(_onlyCLevel())
+    assert (_onlyCLevel() or isAuthorizedLevel(account))
     # make sure the tokenId has been created already
     Require(_tokenExist(tokenId))
     # make sure the amount is legal, which is greater than ZERO
@@ -568,12 +560,11 @@ def getCOO():
     """
     return Get(GetContext(), COO_ADDRESS_KEY)
 
-def getAuthorizedLevel():
-    authorizedAddressListInfo = Get(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY)
-    if  authorizedAddressListInfo:
-        return Deserialize(authorizedAddressListInfo)
-    else:
-        return []
+def isAuthorizedLevel(account):
+    isAuthorized = Get(GetContext(), _concatkey(AUTHORIZED_LEVEL_PREFIX, account))
+    if isAuthorized == "T":
+        return True
+    return False
 #################### Optional methods defination Ends ######################
 
 
@@ -590,16 +581,6 @@ def _onlyCLevel():
     if len(COOAddress) == 20:
         isCOO = CheckWitness(COOAddress)
     return isCEO or isCTO or isCOO
-
-def _onlyAuthorizedLevel():
-    authorizedAddressListInfo = Get(GetContext(), AUTHORIZED_ADDRESS_LIST_KEY)
-    if not authorizedAddressListInfo:
-        return False
-    authorizedAddressList = Deserialize(authorizedAddressListInfo)
-    for authorizedAddress in authorizedAddressList:
-        if CheckWitness(authorizedAddress):
-            return True
-    return False
 
 def _whenNotPaused():
     isPaused = Get(GetContext(), CONTRACT_PAUSED_KEY)
@@ -621,21 +602,6 @@ def _tokenExist(tokenId):
         return True
     else:
         return False
-
-def _checkInList(e, l):
-    for eInl in l:
-        if eInl == e:
-            return True
-    return False
-
-def _findInList(e, l):
-    index = 0
-    for eInl in l:
-        if eInl == e:
-            return index
-        index = Add(index, 1)
-    return index
-
 
 def _concatkey(str1, str2):
     return concat(concat(str1, '_'), str2)
